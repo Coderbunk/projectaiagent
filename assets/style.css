@@ -1,0 +1,280 @@
+/* 
+   QueryMind CSS Stylesheet
+*/
+
+/* Import Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Audiowide&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700&display=swap');
+
+:root {
+    --primary-neon: #39ffa2;
+    --accent-pink: #ff69b4;
+    --dark-bg: #042b15;
+    --sidebar-bg: #020c08;
+    --card-bg: transparent;
+    --text-light: #e0f7e9;
+    --text-secondary: #ced383;
+    --font-size-base: 1rem;
+    --font-size-sm: 0.875rem;
+    --font-size-xs: 0.75rem;
+    --accent-blue: #00b7eb;
+    --secondary-green: #73af82;
+}
+
+/* ========== BASE STYLES ========== */
+body {
+    background-color: var(--dark-bg);
+    color: var(--text-light);
+    font-family: 'Orbitron', sans-serif;
+}
+
+/* ========== SIDEBAR ========== */
+section[data-testid="stSidebar"] {
+    background-color: var(--sidebar-bg);
+    color: var(--accent-pink);
+    padding: 1rem;
+    font-family: 'Orbitron', sans-serif;
+    box-shadow: inset 0 0 12px #026517;
+    width: 455px !important;  
+}
+
+.chat-sidebar, .sidebar-header {
+    background-color: var(--card-bg);
+    border: 1px solid #2e7054;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 2px 2px 8px rgba(0, 255, 170, 0.2);
+    text-align: center;
+}
+
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3 {
+    color: var(--secondary-green);
+    text-shadow: 0 0 8px #f1066c;
+    font-size: 1.3rem;
+    margin-bottom: 0.5rem;
+    padding: 0.5rem;
+}
+
+/* ========== COMPONENT STYLES ========== */
+.card {
+    background-color: var(--card-bg);
+    border: 1px solid #2e7054;
+    border-radius: 12px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 2px 2px 8px rgba(0, 255, 170, 0.2);
+}
+
+.glow-header {
+    font-size: 1.6rem;
+    color: #aef1cf;
+    text-shadow: 0 0 5px var(--primary-neon);
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 2px solid var(--primary-neon);
+    padding-bottom: 5px;
+}
+
+.glow-header.db-details {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.2rem;
+    color: var(--primary-neon);
+    text-shadow: 0 0 8px var(--primary-neon);
+    margin-bottom: 0.5rem;
+}
+
+.tagline {
+    font-family: 'Orbitron', sans-serif;
+    font-size: var(--font-size-sm);
+    color: var(--accent-blue);
+    text-shadow: 0 0 4px var(--accent-blue);
+    margin: 0;
+    font-weight: 700;
+}
+
+.hint {
+    font-family: 'Audiowide', sans-serif;
+    font-size: var(--font-size-sm);
+    color: var(--accent-blue);
+}
+
+input[type="text"], .stTextInput > div > input {
+    background-color: #5f726b;
+    color: #d9fff1;
+    border: 1px solid #4de5a0;
+    border-radius: 8px;
+}
+
+/* ========== ALERTS ========== */
+.stAlert {
+    border-radius: 6px;
+    padding: 10px;
+    margin: 10px 0;
+    background-color: rgba(255, 148, 194, 0.1);
+    border: 1px solid var(--accent-pink);
+}
+
+.stAlert[data-testid="stAlert"] p {
+    color: var(--accent-pink);
+    text-shadow: 0 0 3px var(--accent-pink);
+}
+
+/* ========== DATABASE INFO ========== */
+.db-info-card, .tables-card {
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(57, 255, 162, 0.5);
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.db-info-text {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 500;
+    font-size: var(--font-size-base);
+    color: #d2f5d0;
+    text-align: center;
+    text-shadow: 0 0 3px var(--primary-neon);
+}
+
+.table-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 10px;
+    background-color: rgba(46, 112, 84, 0.2);
+    border-radius: 6px;
+    margin: 12px 0;
+    transition: background-color 0.3s ease;
+}
+
+.table-item:hover {
+    background-color: rgba(46, 112, 84, 0.4);
+}
+
+.table-item span {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 500;
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+}
+
+.table-item .row-count {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    color: var(--primary-neon);
+    font-size: var(--font-size-xs);
+    text-shadow: 0 0 3px var(--primary-neon);
+}
+
+/* ========== CHAT INTERFACE ========== */
+.stChatMessage {
+    background-color: transparent;
+    border-radius: 20px;
+    padding: 12px;
+    margin: 10px -100px;
+    border-left: 7px solid #73ffcd;
+}
+
+/* General button styling */
+.stButton > button {
+    background-color: transparent;
+    border: 1px solid ;
+    border-radius: 5px;
+    padding: 0.5rem 1rem;
+    font-weight: 500;
+    transition: box-shadow 0.2s, background-color 0.3s;
+}
+
+/* Primary button styling (used for active session) */
+.stButton button[kind="primary"] {
+    background-color: #041504 !important;
+    color: #cde56e !important;
+    border: 1px solid var(--primary-neon) !important;
+    border-radius: 5px;
+    box-shadow: 0 0 8px #4de5a0 !important;
+    transition: all 0.3s ease !important;
+}
+    
+.stButton button[kind="primary"]:hover {
+    box-shadow: 0 0 10px #deaebe !important;
+    transform: translateY(-2px) !important;
+}
+/* Secondary button styling (used for non-active sessions) */
+.stButton button[kind="secondary"] {
+    background-color: transparent !important;
+    border: 1px solid #7ddaae !important;
+    border-radius: 5px;
+    color:#aae0c7 !important;
+    font-weight: 500 !important;
+    transition: all 0.3s ease !important;
+}
+.stButton button[kind="secondary"]:hover {
+    box-shadow: 0 0 10px #deaebe !important;
+    transform: translateY(-2px) !important;
+}
+
+.stButton button[kind="tertiary"] {
+    background-color: transparent !important;
+    border: 3px solid #8a0c0c !important;
+    border-radius: 5px;
+    color: #ff0000 !important;
+    font-weight: 500 !important;
+    transition: all 0.3s ease !important;
+    padding: 0rem 0.5rem !important; /* Add padding to create space */
+}
+.stButton button[kind="tertiary"]:hover {
+    box-shadow: 0 0 30px #8d0321 !important;
+    transform: translateY(-2px) !important;
+}
+
+div[data-testid="stFileUploader"] {
+    padding: 0.1rem 3rem;
+    margin-bottom: -2rem;
+}
+
+div[data-testid="stAlert"] {
+    padding: 0.8rem 1rem;
+    margin: 0.1rem 3rem;
+    border-radius: 0.5rem;
+    font-size: var(--font-size-sm);
+}
+
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 600px) {
+    .stChatMessage {
+        margin: 10px 0;
+        padding: 8px;
+    }
+
+    section[data-testid="stSidebar"] {
+        padding: 0.5rem;
+    }
+
+    .card {
+        padding: 0.5rem;
+    }
+
+    .glow-header {
+        font-size: var(--font-size-sm);
+    }
+
+    .nav-buttons {
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .sample-questions-container {
+        margin: 0 1rem;
+        gap: 0.3rem;
+    }
+
+    .sample-questions-container .stButton > button {
+        min-width: 100px;
+        font-size: 0.7rem;
+        padding: 0.2rem 0.4rem;
+        height: 28px;
+    }
+}

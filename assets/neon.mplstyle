@@ -1,0 +1,13 @@
+
+axes.facecolor: #1a1a1a
+figure.facecolor: #1a1a1a
+axes.edgecolor: #39ffa2
+axes.labelcolor: #d2f5d0
+xtick.color: #d2f5d0
+ytick.color: #d2f5d0
+text.color: #d2f5d0
+axes.grid: True
+grid.color: #39ffa2
+grid.alpha: 0.3
+axes.spines.top: False
+axes.spines.right: False
