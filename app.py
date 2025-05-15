@@ -561,7 +561,7 @@ with st.sidebar:
                 logout()
         with col1:
             if not st.session_state.is_guest:
-                if st.button("Delete Account", key="delete_account", help="Permanently delete your account and all associated data", type="secondary"):
+                if st.button("Delete Account", key="delete_account", help="Permanently delete your account and all associated data", type="tertiary"):
                     user_id = st.session_state.user.get("user_id")
                     if user_id and delete_user(user_id):
                         logout()
