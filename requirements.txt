@@ -7,3 +7,4 @@ python-dotenv>=1.0.0
 mysql.connector
 bcrypt
 cryptography
+mysql-connector-python
