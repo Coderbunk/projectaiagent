@@ -32,6 +32,21 @@ def init_users_db():
     Initialize the users MySQL database with a users table.
     Requires MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD in .env.
     """
+    # Validate environment variables
+    required_vars = {
+        "MYSQL_HOST": Config.MYSQL_HOST,
+        "MYSQL_PORT": Config.MYSQL_PORT,
+        "MYSQL_USER": Config.MYSQL_USER,
+        "MYSQL_PASSWORD": Config.MYSQL_PASSWORD,
+        "MYSQL_USERS_DB": Config.MYSQL_USERS_DB
+    }
+    for var_name, var_value in required_vars.items():
+        if not var_value:
+            st.error(f"Missing environment variable: {var_name}", icon="❌")
+            return
+
+    connection = None
+    cursor = None
     try:
         connection = mysql.connector.connect(
             host=Config.MYSQL_HOST,
@@ -54,10 +69,11 @@ def init_users_db():
             """)
             connection.commit()
     except Error as e:
-        st.error(f"Error initializing users database: {e}", icon="❌")
+        st.error(f"Error initializing users database: {e} (check MySQL host, port, user, and password)", icon="❌")
     finally:
-        if connection.is_connected():
+        if cursor is not None:
             cursor.close()
+        if connection is not None and connection.is_connected():
             connection.close()
 
 @contextmanager
