@@ -10,13 +10,12 @@ using natural language queries, and manage chat sessions via a sidebar with
 navigation tabs for Database Info, Chat History, and Settings. Sample questions are shown
 horizontally for new users after database upload. Includes authentication for
 guest and registered users.
-
-Designed for deployment on Streamlit Cloud with Aiven MySQL.
 """
 
 # Standard library imports
 import os
 import random
+import shutil
 import json
 import sqlite3
 from datetime import datetime
@@ -28,17 +27,15 @@ import streamlit as st
 from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-import mysql.connector
-from mysql.connector import Error
 
 # Local application imports
 from Querymind.config import Config
 from Querymind.models import create_llm
 from Querymind.tools import get_available_tools, with_sql_cursor
 from Querymind.agent import ask, create_history
-from auth import init_users_db, show_login_page, logout, delete_user, with_conversations_db_cursor
+from auth import init_users_db, show_login_page, logout, delete_user
 
-# Set page configuration
+# Set page configuration at the very top
 favicon_path = os.path.join(os.path.dirname(__file__), "static", "logo2.png")
 if not os.path.exists(favicon_path):
     st.warning(f"Favicon file not found at {favicon_path}. Using default Streamlit icon.", icon="⚠️")
@@ -51,7 +48,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Immediate authentication check
+# Immediate authentication check to prevent main page rendering
 if (
     st.session_state.get("force_login_page", False)
     or not st.session_state.get("authenticated", False)
@@ -66,12 +63,15 @@ load_dotenv()
 # Initialize database path
 Config.Path.DATABASE_PATH = None
 
+# Initialize conversations database for session storage
+CONVERSATIONS_DB = Config.Path.DATA_DIR / "conversations.db"
+
 # Loading messages for query processing
 LOADING_MESSAGES = [
     "Consulting the ancient tomes of SQL wisdom ... ",
     "Casting query spells on your database ... ",
     "Summoning data from the digital realms ... ",
-    "Deciphering your request into database runes ... ",
+    "Deciphering your request into |database runes ... ",
     "Brewing a potion of perfect query syntax ... ",
     "Channeling the power of database magic ... ",
     "Translating your words into the language of tables ... ",
@@ -91,42 +91,61 @@ LOADING_MESSAGES = [
 ]
 
 def init_conversations_db():
-    """
-    Initialize the conversations MySQL database and ensure correct schema.
-    Requires MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD in .env.
-    """
-    try:
-        connection = mysql.connector.connect(
-            host=Config.MYSQL_HOST,
-            port=Config.MYSQL_PORT,
-            user=Config.MYSQL_USER,
-            password=Config.MYSQL_PASSWORD
-        )
-        if connection.is_connected():
-            cursor = connection.cursor()
-            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {Config.MYSQL_CONVERSATIONS_DB}")
-            cursor.execute(f"USE {Config.MYSQL_CONVERSATIONS_DB}")
+    """Initialize the conversations SQLite database and ensure correct schema."""
+    Config.Path.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(CONVERSATIONS_DB) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                title TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                conversation_json TEXT NOT NULL
+            )
+        """)
+        # Migrate existing sessions table if user_id is INTEGER
+        cursor.execute("PRAGMA table_info(sessions)")
+        columns = cursor.fetchall()
+        user_id_type = next((col[2] for col in columns if col[1] == 'user_id'), None)
+        if user_id_type == 'INTEGER':
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS sessions (
-                    session_id INTEGER PRIMARY KEY AUTO_INCREMENT,
-                    user_id VARCHAR(255),
+                CREATE TABLE sessions_new (
+                    session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT,
                     title TEXT NOT NULL,
                     created_at TIMESTAMP NOT NULL,
                     conversation_json TEXT NOT NULL
                 )
             """)
-            connection.commit()
-    except Error as e:
-        st.error(f"Error initializing conversations database: {e}", icon="❌")
+            cursor.execute("SELECT session_id, user_id, title, created_at, conversation_json FROM sessions")
+            for row in cursor.fetchall():
+                new_user_id = f"QM{row[1]}" if row[1] is not None else None
+                cursor.execute(
+                    "INSERT INTO sessions_new (session_id, user_id, title, created_at, conversation_json) VALUES (?, ?, ?, ?, ?)",
+                    (row[0], new_user_id, row[2], row[3], row[4])
+                )
+            cursor.execute("DROP TABLE sessions")
+            cursor.execute("ALTER TABLE sessions_new RENAME TO sessions")
+        conn.commit()
+
+@contextmanager
+def with_conversations_cursor():
+    """Context manager for conversations database cursor."""
+    conn = sqlite3.connect(CONVERSATIONS_DB)
+    cursor = conn.cursor()
+    try:
+        yield cursor
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
-        if connection.is_connected():
-            cursor.close()
-            connection.close()
+        cursor.close()
+        conn.close()
 
 def save_session(session_id, title, messages):
-    """
-    Save or update a chat session in the conversations database for authenticated users.
-    """
+    """Save or update a chat session in the conversations database for authenticated users."""
     if st.session_state.is_guest:
         return None
     user_id = st.session_state.user.get("user_id")
@@ -139,38 +158,36 @@ def save_session(session_id, title, messages):
         if not isinstance(msg, SystemMessage)
     ]
     try:
-        with with_conversations_db_cursor() as cursor:
+        with with_conversations_cursor() as cursor:
             if session_id is None:
                 current_time = datetime.now().strftime("%d-%m-%y [%H:%M]")
                 title = f"Chat@{current_time}"
                 cursor.execute(
-                    "INSERT INTO sessions (user_id, title, created_at, conversation_json) VALUES (%s, %s, %s, %s)",
+                    "INSERT INTO sessions (user_id, title, created_at, conversation_json) VALUES (?, ?, ?, ?)",
                     (user_id, title, datetime.now(), json.dumps(serialized_messages))
                 )
                 return cursor.lastrowid
             else:
                 cursor.execute(
-                    "UPDATE sessions SET title = %s, conversation_json = %s WHERE session_id = %s AND user_id = %s",
+                    "UPDATE sessions SET title = ?, conversation_json = ? WHERE session_id = ? AND user_id = ?",
                     (title, json.dumps(serialized_messages), session_id, user_id)
                 )
                 return session_id
-    except Error as e:
+    except sqlite3.Error as e:
         st.error(f"Database error while saving session: {str(e)}", icon="❌")
         return None
 
 def load_session(session_id):
-    """
-    Load a chat session from the conversations database.
-    """
+    """Load a chat session from the conversations database."""
     if st.session_state.is_guest:
         return create_history()
     user_id = st.session_state.user.get("user_id")
     if user_id is None:
         return create_history()
     try:
-        with with_conversations_db_cursor() as cursor:
+        with with_conversations_cursor() as cursor:
             cursor.execute(
-                "SELECT conversation_json FROM sessions WHERE session_id = %s AND user_id = %s",
+                "SELECT conversation_json FROM sessions WHERE session_id = ? AND user_id = ?",
                 (session_id, user_id)
             )
             result = cursor.fetchone()
@@ -184,23 +201,21 @@ def load_session(session_id):
                         history.append(AIMessage(content=msg["content"]))
                 return history
             return create_history()
-    except Error as e:
+    except sqlite3.Error as e:
         st.error(f"Database error while loading session: {str(e)}", icon="❌")
         return create_history()
 
 def delete_session(session_id):
-    """
-    Delete a chat session from the conversations database.
-    """
+    """Delete a chat session from the conversations database."""
     if st.session_state.is_guest:
         return
     user_id = st.session_state.user.get("user_id")
     if user_id is None:
         return
     try:
-        with with_conversations_db_cursor() as cursor:
+        with with_conversations_cursor() as cursor:
             cursor.execute(
-                "DELETE FROM sessions WHERE session_id = %s AND user_id = %s",
+                "DELETE FROM sessions WHERE session_id = ? AND user_id = ?",
                 (session_id, user_id)
             )
         if "current_session_id" in st.session_state and st.session_state.current_session_id == session_id:
@@ -208,83 +223,76 @@ def delete_session(session_id):
             st.session_state.current_session_id = new_session_id
             st.session_state.session_title = f"Chat@{datetime.now().strftime('%d-%m-%y [%H:%M]')}"
             st.session_state.messages = create_history()
-    except Error as e:
+    except sqlite3.Error as e:
         st.error(f"Database error while deleting session: {str(e)}", icon="❌")
 
 def list_sessions():
-    """
-    List all chat sessions for the current user.
-    """
+    """List all chat sessions for the current user."""
     if st.session_state.is_guest:
         return []
     user_id = st.session_state.user.get("user_id")
     if user_id is None:
         return []
     try:
-        with with_conversations_db_cursor() as cursor:
-            cursor.execute(
-                "SELECT session_id, title, created_at FROM sessions WHERE user_id = %s ORDER BY created_at DESC",
-                (user_id,)
-            )
+        with with_conversations_cursor() as cursor:
+            cursor.execute("PRAGMA table_info(sessions)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'user_id' not in columns:
+                cursor.execute(
+                    "SELECT session_id, title, created_at FROM sessions ORDER BY created_at DESC"
+                )
+            else:
+                cursor.execute(
+                    "SELECT session_id, title, created_at FROM sessions WHERE user_id = ? ORDER BY created_at DESC",
+                    (user_id,)
+                )
             sessions = [
-                (session_id, title, datetime.strptime(str(created_at), "%Y-%m-%d %H:%M:%S").strftime("%d-%m-%y [%H:%M]"))
+                (session_id, title, datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S.%f").strftime("%d-%m-%y [%H:%M]"))
                 for session_id, title, created_at in cursor.fetchall()
             ]
             return sessions
-    except Error as e:
+    except sqlite3.Error as e:
         st.error(f"Database error while listing sessions: {str(e)}", icon="❌")
         return []
 
 def reset_model_cache():
-    """
-    Reset the cached LLM model in session state.
-    """
+    """Reset the cached LLM model in session state."""
     if 'model' in st.session_state:
         del st.session_state['model']
 
 @st.cache_resource(show_spinner=False)
 def get_model() -> BaseChatModel:
-    """
-    Create and cache an LLM instance with database tools bound.
-    """
+    """Create and cache an LLM instance with database tools bound."""
     llm = create_llm(Config.MODEL)
     llm = llm.bind_tools(get_available_tools())
     return llm
 
 def load_css(css_file):
-    """
-    Load and apply CSS styling from an external file.
-    """
+    """Load and apply CSS styling from an external file."""
     try:
-        css_path = os.path.join(os.path.dirname(__file__), css_file)
-        with open(css_path) as f:
+        with open(css_file) as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
     except FileNotFoundError:
-        st.warning(f"CSS file not found at {css_file}. Default styling applied.", icon="⚠️")
+        st.warning("CSS file not found. Default styling will be applied.", icon="⚠️")
 
 def save_uploaded_file(uploaded_file):
-    """
-    Save an uploaded database file to the configured directory.
-    """
+    """Save an uploaded database file to the configured directory."""
     file_path = Config.Path.UPLOADED_DB_DIR / uploaded_file.name
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
     try:
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
         with sqlite3.connect(file_path) as conn:
             conn.cursor().execute("SELECT 1")
-    except (sqlite3.Error, OSError) as e:
-        st.error(f"Invalid SQLite database file: {str(e)}", icon="❌")
-        if file_path.exists():
-            file_path.unlink()
+    except sqlite3.Error:
+        st.error("Invalid SQLite database file.", icon="❌")
+        file_path.unlink()
         return None
     Config.Path.DATABASE_PATH = file_path
     reset_model_cache()
     return file_path
 
 def clear_chat():
-    """
-    Clear the current session's chat history.
-    """
+    """Clear the current session's chat history."""
     if st.session_state.is_guest:
         st.session_state.messages = create_history()
         return True
@@ -358,10 +366,10 @@ st.markdown(f"""
     <p style="font-family: 'Orbitron', sans-serif; color: #ff69b4; font-size: 1.8rem; font-weight: 600; text-shadow: 0 0 6px #ff69b4, 0 0 12px #ffb6c1; margin: 0 0 0 -1.6rem;">
         Database Query Assistant
     </p>
-    <p style="font-size: 1.1rem; color: #d2f5d0; max-width: 600px; margin: 0 auto 0.5rem; text-shadow: 0 0 6px #39ffa2; font-style: italic;">
+    <p style="font-size: 1.1rem; color: #d2f5d0; max-width: 600px; margin: 0 auto 0.5rem auto; text-shadow: 0 0 6px #39ffa2; font-style: italic;">
         Intelligence that speaks your language to extract insights — Talk to your database using natural language.
     </p>
-    <p style="font-family: 'Orbitron', sans-serif; font-size: 1rem; color: yellow; margin: 0.5rem auto 3rem; text-shadow: 0 0 9px #39ffa2;">
+    <p style="font-family: 'Orbitron', sans-serif; font-size: 1rem; color: yellow; margin: 0.5rem auto 3rem auto; text-shadow: 0 0 9px #39ffa2;">
         Welcome, {welcome_text}
     </p>
 </div>
@@ -399,13 +407,14 @@ else:
 with st.sidebar:
     st.markdown('<div class="nav-buttons">', unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns([0.95, 0.7, 0.89])
+    col1, col2, col3= st.columns([0.95, 0.7, 0.89])
     with col1:
         if st.button("Database Info", key="nav_db_info"):
             st.session_state.sidebar_nav = "Database Info"
     with col3:
         if st.button("Chat History", key="nav_chat_history"):
             st.session_state.sidebar_nav = "Chat History"
+    
     with col2:
         if st.button("Settings", key="nav_settings"):
             st.session_state.sidebar_nav = "Settings"
@@ -465,25 +474,17 @@ with st.sidebar:
                         
                         with st.expander("View Tables", expanded=True):
                             for table in tables:
-                                # Validate table name
-                                cursor.execute(
-                                    "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
-                                    (table,)
-                                )
-                                if cursor.fetchone():
-                                    cursor.execute(f"SELECT count(*) FROM [{table}]")
-                                    count = cursor.fetchone()[0]
-                                    st.markdown(f"""
-                                        <div class="table-item">
-                                            <span>{table}</span>
-                                            <span class="row-count">{count} rows</span>
-                                        </div>
-                                    """, unsafe_allow_html=True)
-                                else:
-                                    st.warning(f"Table {table} not found.", icon="⚠️")
+                                cursor.execute(f"SELECT count(*) FROM {table};")
+                                count = cursor.fetchone()[0]
+                                st.markdown(f"""
+                                    <div class="table-item">
+                                        <span>{table}</span>
+                                        <span class="row-count">{count} rows</span>
+                                    </div>
+                                """, unsafe_allow_html=True)
                     else:
                         st.warning("No tables found in the database.", icon="⚠️")
-            except sqlite3.Error as e:
+            except Exception as e:
                 st.error(f"Error reading database: {str(e)}", icon="❌")
         else:
             st.markdown("""
@@ -504,7 +505,10 @@ with st.sidebar:
             </div>
         """, unsafe_allow_html=True)
 
-        col1, col2 = st.columns([1.47, 2.8])
+        left_space = 1.47
+        right_space = 2.8      
+        col1, col2 = st.columns([left_space, right_space])
+
         with col2:
             st.markdown('<div class="new-chat-container">', unsafe_allow_html=True)
             if st.button("New Chat", key="new_chat", type="primary"):
@@ -524,6 +528,7 @@ with st.sidebar:
         sessions = list_sessions()
         if sessions:
             st.markdown("<h3 class='glow-header db-details'>Previous Chats</h3>", unsafe_allow_html=True)
+
             for session_id, title, created_at in sessions:
                 col1, col2 = st.columns([4, 1])
                 with col1:
@@ -544,8 +549,7 @@ with st.sidebar:
                         delete_session(session_id)
                         st.rerun()
         else:
-            st.info("ℹ️ Log in to access chat sessions.")
-
+            st.info("ℹ️ Login to access chat sessions")
     elif st.session_state.sidebar_nav == "Settings":
         st.markdown("""
             <div class="card sidebar-header">
@@ -570,7 +574,9 @@ with st.sidebar:
         st.markdown('</div>', unsafe_allow_html=True)
 
 # Clear Chat Button
-col1, col2 = st.columns([2.3, 3])
+left_space = 2.3
+right_space = 3
+col1, col2 = st.columns([left_space, right_space])
 with col2:
     if st.button("Clear Chat", type="secondary"):
         if clear_chat():
@@ -588,7 +594,7 @@ if Config.Path.DATABASE_PATH and Config.Path.DATABASE_PATH.exists() and not st.s
             "Describe the database schema.",
             "Summarize the database structure.",
             "Show relations between tables.",
-            "Show top 5 rows of all tables"
+            "Show top 5 rows of all table"
         ]
 
         st.markdown('<div class="new-chat-container">', unsafe_allow_html=True)
@@ -629,7 +635,7 @@ if st.session_state.pending_sample_question:
             st.session_state.pending_sample_question = None
             error_msg = str(e).lower()
             if any(keyword in error_msg for keyword in ["limit exceeded", "rate limit", "quota exceeded"]):
-                st.error(f"Usage limit exceeded. Please try again later or upgrade your plan. Error: {str(e)}", icon="⚠️")
+                st.error(f"Usage limit exceeded. Please try again later or upgrade your plan. Error details: {str(e)}", icon="⚠️")
             else:
                 st.error(f"Error processing your request: {str(e)}", icon="❌")
 
@@ -680,6 +686,6 @@ if prompt := st.chat_input("Type your message ... "):
                 message_placeholder.empty()
                 error_msg = str(e).lower()
                 if any(keyword in error_msg for keyword in ["limit exceeded", "rate limit", "quota exceeded"]):
-                    st.error(f"Usage limit exceeded. Please try again later or upgrade your plan. Error: {str(e)}", icon="⚠️")
+                    st.error(f"Usage limit exceeded. Please try again later or upgrade your plan. Error details: {str(e)}", icon="⚠️")
                 else:
                     st.error(f"Error processing your request: {str(e)}", icon="❌")
