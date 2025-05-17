@@ -10,13 +10,12 @@ using natural language queries, and manage chat sessions via a sidebar with
 navigation tabs for Database Info, Chat History, and Settings. Sample questions are shown
 horizontally for new users after database upload. Includes authentication for
 guest and registered users.
-
-Designed for deployment on Streamlit Cloud with Aiven MySQL.
 """
 
 # Standard library imports
 import os
 import random
+import shutil
 import json
 import sqlite3
 from datetime import datetime
@@ -38,7 +37,7 @@ from Querymind.tools import get_available_tools, with_sql_cursor
 from Querymind.agent import ask, create_history
 from auth import init_users_db, show_login_page, logout, delete_user, with_conversations_db_cursor
 
-# Set page configuration
+# Set page configuration at the very top
 favicon_path = os.path.join(os.path.dirname(__file__), "static", "logo2.png")
 if not os.path.exists(favicon_path):
     st.warning(f"Favicon file not found at {favicon_path}. Using default Streamlit icon.", icon="⚠️")
@@ -51,7 +50,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Immediate authentication check
+# Immediate authentication check to prevent main page rendering
 if (
     st.session_state.get("force_login_page", False)
     or not st.session_state.get("authenticated", False)
@@ -71,7 +70,7 @@ LOADING_MESSAGES = [
     "Consulting the ancient tomes of SQL wisdom ... ",
     "Casting query spells on your database ... ",
     "Summoning data from the digital realms ... ",
-    "Deciphering your request into database runes ... ",
+    "Deciphering your request into |database runes ... ",
     "Brewing a potion of perfect query syntax ... ",
     "Channeling the power of database magic ... ",
     "Translating your words into the language of tables ... ",
@@ -93,8 +92,20 @@ LOADING_MESSAGES = [
 def init_conversations_db():
     """
     Initialize the conversations MySQL database and ensure correct schema.
-    Requires MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD in .env.
     """
+    required_vars = [
+        Config.MYSQL_HOST,
+        Config.MYSQL_PORT,
+        Config.MYSQL_USER,
+        Config.MYSQL_PASSWORD,
+        Config.MYSQL_CONVERSATIONS_DB
+    ]
+    if not all(required_vars):
+        st.error("Missing MySQL configuration for conversations database.", icon="❌")
+        return
+
+    connection = None
+    cursor = None
     try:
         connection = mysql.connector.connect(
             host=Config.MYSQL_HOST,
@@ -110,7 +121,7 @@ def init_conversations_db():
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id INTEGER PRIMARY KEY AUTO_INCREMENT,
                     user_id VARCHAR(255),
-                    title TEXT NOT NULL,
+                    title VARCHAR(255) NOT NULL,
                     created_at TIMESTAMP NOT NULL,
                     conversation_json TEXT NOT NULL
                 )
@@ -119,8 +130,9 @@ def init_conversations_db():
     except Error as e:
         st.error(f"Error initializing conversations database: {e}", icon="❌")
     finally:
-        if connection.is_connected():
+        if cursor is not None:
             cursor.close()
+        if connection is not None and connection.is_connected():
             connection.close()
 
 def save_session(session_id, title, messages):
@@ -155,7 +167,7 @@ def save_session(session_id, title, messages):
                 )
                 return session_id
     except Error as e:
-        st.error(f"Database error while saving session: {str(e)}", icon="❌")
+        st.error(f"Database error while saving session: {e}", icon="❌")
         return None
 
 def load_session(session_id):
@@ -185,7 +197,7 @@ def load_session(session_id):
                 return history
             return create_history()
     except Error as e:
-        st.error(f"Database error while loading session: {str(e)}", icon="❌")
+        st.error(f"Database error while loading session: {e}", icon="❌")
         return create_history()
 
 def delete_session(session_id):
@@ -209,7 +221,7 @@ def delete_session(session_id):
             st.session_state.session_title = f"Chat@{datetime.now().strftime('%d-%m-%y [%H:%M]')}"
             st.session_state.messages = create_history()
     except Error as e:
-        st.error(f"Database error while deleting session: {str(e)}", icon="❌")
+        st.error(f"Database error while deleting session: {e}", icon="❌")
 
 def list_sessions():
     """
@@ -227,64 +239,52 @@ def list_sessions():
                 (user_id,)
             )
             sessions = [
-                (session_id, title, datetime.strptime(str(created_at), "%Y-%m-%d %H:%M:%S").strftime("%d-%m-%y [%H:%M]"))
+                (session_id, title, datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S.%f").strftime("%d-%m-%y [%H:%M]"))
                 for session_id, title, created_at in cursor.fetchall()
             ]
             return sessions
     except Error as e:
-        st.error(f"Database error while listing sessions: {str(e)}", icon="❌")
+        st.error(f"Database error while listing sessions: {e}", icon="❌")
         return []
 
 def reset_model_cache():
-    """
-    Reset the cached LLM model in session state.
-    """
+    """Reset the cached LLM model in session state."""
     if 'model' in st.session_state:
         del st.session_state['model']
 
 @st.cache_resource(show_spinner=False)
 def get_model() -> BaseChatModel:
-    """
-    Create and cache an LLM instance with database tools bound.
-    """
+    """Create and cache an LLM instance with database tools bound."""
     llm = create_llm(Config.MODEL)
     llm = llm.bind_tools(get_available_tools())
     return llm
 
 def load_css(css_file):
-    """
-    Load and apply CSS styling from an external file.
-    """
+    """Load and apply CSS styling from an external file."""
     try:
-        css_path = os.path.join(os.path.dirname(__file__), css_file)
-        with open(css_path) as f:
+        with open(css_file) as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
     except FileNotFoundError:
-        st.warning(f"CSS file not found at {css_file}. Default styling applied.", icon="⚠️")
+        st.warning("CSS file not found. Default styling will be applied.", icon="⚠️")
 
 def save_uploaded_file(uploaded_file):
-    """
-    Save an uploaded database file to the configured directory.
-    """
+    """Save an uploaded database file to the configured directory."""
     file_path = Config.Path.UPLOADED_DB_DIR / uploaded_file.name
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
     try:
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
         with sqlite3.connect(file_path) as conn:
             conn.cursor().execute("SELECT 1")
-    except (sqlite3.Error, OSError) as e:
-        st.error(f"Invalid SQLite database file: {str(e)}", icon="❌")
-        if file_path.exists():
-            file_path.unlink()
+    except sqlite3.Error:
+        st.error("Invalid SQLite database file.", icon="❌")
+        file_path.unlink()
         return None
     Config.Path.DATABASE_PATH = file_path
     reset_model_cache()
     return file_path
 
 def clear_chat():
-    """
-    Clear the current session's chat history.
-    """
+    """Clear the current session's chat history."""
     if st.session_state.is_guest:
         st.session_state.messages = create_history()
         return True
@@ -358,10 +358,10 @@ st.markdown(f"""
     <p style="font-family: 'Orbitron', sans-serif; color: #ff69b4; font-size: 1.8rem; font-weight: 600; text-shadow: 0 0 6px #ff69b4, 0 0 12px #ffb6c1; margin: 0 0 0 -1.6rem;">
         Database Query Assistant
     </p>
-    <p style="font-size: 1.1rem; color: #d2f5d0; max-width: 600px; margin: 0 auto 0.5rem; text-shadow: 0 0 6px #39ffa2; font-style: italic;">
+    <p style="font-size: 1.1rem; color: #d2f5d0; max-width: 600px; margin: 0 auto 0.5rem auto; text-shadow: 0 0 6px #39ffa2; font-style: italic;">
         Intelligence that speaks your language to extract insights — Talk to your database using natural language.
     </p>
-    <p style="font-family: 'Orbitron', sans-serif; font-size: 1rem; color: yellow; margin: 0.5rem auto 3rem; text-shadow: 0 0 9px #39ffa2;">
+    <p style="font-family: 'Orbitron', sans-serif; font-size: 1rem; color: yellow; margin: 0.5rem auto 3rem auto; text-shadow: 0 0 9px #39ffa2;">
         Welcome, {welcome_text}
     </p>
 </div>
@@ -406,6 +406,7 @@ with st.sidebar:
     with col3:
         if st.button("Chat History", key="nav_chat_history"):
             st.session_state.sidebar_nav = "Chat History"
+    
     with col2:
         if st.button("Settings", key="nav_settings"):
             st.session_state.sidebar_nav = "Settings"
@@ -465,25 +466,17 @@ with st.sidebar:
                         
                         with st.expander("View Tables", expanded=True):
                             for table in tables:
-                                # Validate table name
-                                cursor.execute(
-                                    "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
-                                    (table,)
-                                )
-                                if cursor.fetchone():
-                                    cursor.execute(f"SELECT count(*) FROM [{table}]")
-                                    count = cursor.fetchone()[0]
-                                    st.markdown(f"""
-                                        <div class="table-item">
-                                            <span>{table}</span>
-                                            <span class="row-count">{count} rows</span>
-                                        </div>
-                                    """, unsafe_allow_html=True)
-                                else:
-                                    st.warning(f"Table {table} not found.", icon="⚠️")
+                                cursor.execute(f"SELECT count(*) FROM {table};")
+                                count = cursor.fetchone()[0]
+                                st.markdown(f"""
+                                    <div class="table-item">
+                                        <span>{table}</span>
+                                        <span class="row-count">{count} rows</span>
+                                    </div>
+                                """, unsafe_allow_html=True)
                     else:
                         st.warning("No tables found in the database.", icon="⚠️")
-            except sqlite3.Error as e:
+            except Exception as e:
                 st.error(f"Error reading database: {str(e)}", icon="❌")
         else:
             st.markdown("""
@@ -504,7 +497,10 @@ with st.sidebar:
             </div>
         """, unsafe_allow_html=True)
 
-        col1, col2 = st.columns([1.47, 2.8])
+        left_space = 1.47
+        right_space = 2.8      
+        col1, col2 = st.columns([left_space, right_space])
+
         with col2:
             st.markdown('<div class="new-chat-container">', unsafe_allow_html=True)
             if st.button("New Chat", key="new_chat", type="primary"):
@@ -524,6 +520,7 @@ with st.sidebar:
         sessions = list_sessions()
         if sessions:
             st.markdown("<h3 class='glow-header db-details'>Previous Chats</h3>", unsafe_allow_html=True)
+
             for session_id, title, created_at in sessions:
                 col1, col2 = st.columns([4, 1])
                 with col1:
@@ -544,8 +541,7 @@ with st.sidebar:
                         delete_session(session_id)
                         st.rerun()
         else:
-            st.info("ℹ️ Log in to access chat sessions.")
-
+            st.info("ℹ️ Login to access chat sessions")
     elif st.session_state.sidebar_nav == "Settings":
         st.markdown("""
             <div class="card sidebar-header">
@@ -570,7 +566,9 @@ with st.sidebar:
         st.markdown('</div>', unsafe_allow_html=True)
 
 # Clear Chat Button
-col1, col2 = st.columns([2.3, 3])
+left_space = 2.3
+right_space = 3
+col1, col2 = st.columns([left_space, right_space])
 with col2:
     if st.button("Clear Chat", type="secondary"):
         if clear_chat():
@@ -588,7 +586,7 @@ if Config.Path.DATABASE_PATH and Config.Path.DATABASE_PATH.exists() and not st.s
             "Describe the database schema.",
             "Summarize the database structure.",
             "Show relations between tables.",
-            "Show top 5 rows of all tables"
+            "Show top 5 rows of all table"
         ]
 
         st.markdown('<div class="new-chat-container">', unsafe_allow_html=True)
@@ -629,7 +627,7 @@ if st.session_state.pending_sample_question:
             st.session_state.pending_sample_question = None
             error_msg = str(e).lower()
             if any(keyword in error_msg for keyword in ["limit exceeded", "rate limit", "quota exceeded"]):
-                st.error(f"Usage limit exceeded. Please try again later or upgrade your plan. Error: {str(e)}", icon="⚠️")
+                st.error(f"Usage limit exceeded. Please try again later or upgrade your plan. Error details: {str(e)}", icon="⚠️")
             else:
                 st.error(f"Error processing your request: {str(e)}", icon="❌")
 
@@ -680,6 +678,6 @@ if prompt := st.chat_input("Type your message ... "):
                 message_placeholder.empty()
                 error_msg = str(e).lower()
                 if any(keyword in error_msg for keyword in ["limit exceeded", "rate limit", "quota exceeded"]):
-                    st.error(f"Usage limit exceeded. Please try again later or upgrade your plan. Error: {str(e)}", icon="⚠️")
+                    st.error(f"Usage limit exceeded. Please try again later or upgrade your plan. Error details: {str(e)}", icon="⚠️")
                 else:
                     st.error(f"Error processing your request: {str(e)}", icon="❌")
