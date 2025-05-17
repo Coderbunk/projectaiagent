@@ -30,8 +30,22 @@ from Querymind.config import Config
 def init_users_db():
     """
     Initialize the users MySQL database with a users table.
-    Requires MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD in .env.
+    Requires MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD, MYSQL_USERS_DB in .env.
     """
+    # Validate environment variables
+    required_vars = [
+        Config.MYSQL_HOST,
+        Config.MYSQL_PORT,
+        Config.MYSQL_USER,
+        Config.MYSQL_PASSWORD,
+        Config.MYSQL_USERS_DB
+    ]
+    if not all(required_vars):
+        st.error("Missing MySQL configuration. Please check environment variables.", icon="❌")
+        return
+
+    connection = None
+    cursor = None
     try:
         connection = mysql.connector.connect(
             host=Config.MYSQL_HOST,
@@ -56,8 +70,9 @@ def init_users_db():
     except Error as e:
         st.error(f"Error initializing users database: {e}", icon="❌")
     finally:
-        if connection.is_connected():
+        if cursor is not None:
             cursor.close()
+        if connection is not None and connection.is_connected():
             connection.close()
 
 @contextmanager
@@ -79,14 +94,14 @@ def with_users_db_cursor():
         yield cursor
         connection.commit()
     except Error as e:
-        if connection:
+        if connection is not None:
             connection.rollback()
         st.error(f"Database error: {e}", icon="❌")
         raise
     finally:
-        if cursor:
+        if cursor is not None:
             cursor.close()
-        if connection and connection.is_connected():
+        if connection is not None and connection.is_connected():
             connection.close()
 
 @contextmanager
@@ -108,14 +123,14 @@ def with_conversations_db_cursor():
         yield cursor
         connection.commit()
     except Error as e:
-        if connection:
+        if connection is not None:
             connection.rollback()
         st.error(f"Database error: {e}", icon="❌")
         raise
     finally:
-        if cursor:
+        if cursor is not None:
             cursor.close()
-        if connection and connection.is_connected():
+        if connection is not None and connection.is_connected():
             connection.close()
 
 def get_next_user_id():
