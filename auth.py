@@ -20,9 +20,7 @@ import os
 # Third-party imports
 import streamlit as st
 import bcrypt
-import mysql.connector
-from mysql.connector import Error
-from contextlib import contextmanager
+import pymysql
 
 # Local application imports
 from Querymind.config import Config
@@ -47,32 +45,32 @@ def init_users_db():
     connection = None
     cursor = None
     try:
-        connection = mysql.connector.connect(
+        connection = pymysql.connect(
             host=Config.MYSQL_HOST,
-            port=Config.MYSQL_PORT,
+            port=int(Config.MYSQL_PORT),
             user=Config.MYSQL_USER,
-            password=Config.MYSQL_PASSWORD
+            password=Config.MYSQL_PASSWORD,
+            charset='utf8mb4'
         )
-        if connection.is_connected():
-            cursor = connection.cursor()
-            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {Config.MYSQL_USERS_DB}")
-            cursor.execute(f"USE {Config.MYSQL_USERS_DB}")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id VARCHAR(255) PRIMARY KEY,
-                    name VARCHAR(255) NOT NULL,
-                    username VARCHAR(255) NOT NULL UNIQUE,
-                    email VARCHAR(255) NOT NULL UNIQUE,
-                    password VARBINARY(255) NOT NULL
-                )
-            """)
-            connection.commit()
-    except Error as e:
+        cursor = connection.cursor()
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {Config.MYSQL_USERS_DB}")
+        cursor.execute(f"USE {Config.MYSQL_USERS_DB}")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id VARCHAR(255) PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                username VARCHAR(255) NOT NULL UNIQUE,
+                email VARCHAR(255) NOT NULL UNIQUE,
+                password VARBINARY(255) NOT NULL
+            )
+        """)
+        connection.commit()
+    except pymysql.Error as e:
         st.error(f"Error initializing users database: {e}", icon="❌")
     finally:
         if cursor is not None:
             cursor.close()
-        if connection is not None and connection.is_connected():
+        if connection is not None:
             connection.close()
 
 @contextmanager
@@ -83,17 +81,18 @@ def with_users_db_cursor():
     connection = None
     cursor = None
     try:
-        connection = mysql.connector.connect(
+        connection = pymysql.connect(
             host=Config.MYSQL_HOST,
-            port=Config.MYSQL_PORT,
+            port=int(Config.MYSQL_PORT),
             user=Config.MYSQL_USER,
             password=Config.MYSQL_PASSWORD,
-            database=Config.MYSQL_USERS_DB
+            database=Config.MYSQL_USERS_DB,
+            charset='utf8mb4'
         )
         cursor = connection.cursor()
         yield cursor
         connection.commit()
-    except Error as e:
+    except pymysql.Error as e:
         if connection is not None:
             connection.rollback()
         st.error(f"Database error: {e}", icon="❌")
@@ -101,7 +100,7 @@ def with_users_db_cursor():
     finally:
         if cursor is not None:
             cursor.close()
-        if connection is not None and connection.is_connected():
+        if connection is not None:
             connection.close()
 
 @contextmanager
@@ -112,17 +111,18 @@ def with_conversations_db_cursor():
     connection = None
     cursor = None
     try:
-        connection = mysql.connector.connect(
+        connection = pymysql.connect(
             host=Config.MYSQL_HOST,
-            port=Config.MYSQL_PORT,
+            port=int(Config.MYSQL_PORT),
             user=Config.MYSQL_USER,
             password=Config.MYSQL_PASSWORD,
-            database=Config.MYSQL_CONVERSATIONS_DB
+            database=Config.MYSQL_CONVERSATIONS_DB,
+            charset='utf8mb4'
         )
         cursor = connection.cursor()
         yield cursor
         connection.commit()
-    except Error as e:
+    except pymysql.Error as e:
         if connection is not None:
             connection.rollback()
         st.error(f"Database error: {e}", icon="❌")
@@ -130,7 +130,7 @@ def with_conversations_db_cursor():
     finally:
         if cursor is not None:
             cursor.close()
-        if connection is not None and connection.is_connected():
+        if connection is not None:
             connection.close()
 
 def get_next_user_id():
@@ -208,8 +208,9 @@ def register_user(name, username, email, password):
                 "INSERT INTO users (user_id, name, username, email, password) VALUES (%s, %s, %s, %s, %s)",
                 (user_id, name.strip(), username, email.lower(), hashed_password)
             )
+            cursor.connection.commit()
             return True
-    except mysql.connector.IntegrityError as e:
+    except pymysql.err.IntegrityError as e:
         if "Duplicate entry" in str(e):
             if "username" in str(e):
                 st.error("Username already exists. Please choose a different username.", icon="❌")
@@ -218,7 +219,7 @@ def register_user(name, username, email, password):
         else:
             st.error(f"Database error: {str(e)}", icon="❌")
         return False
-    except Error as e:
+    except pymysql.Error as e:
         st.error(f"Database error: {str(e)}", icon="❌")
         return False
 
@@ -242,7 +243,7 @@ def login_user(username, password):
                 if verify_password(password, hashed):
                     return {"user_id": user[0], "name": user[1], "username": user[2], "email": user[3]}
             return None
-    except Error as e:
+    except pymysql.Error as e:
         st.error(f"Database error: {str(e)}", icon="❌")
         return None
 
@@ -253,10 +254,12 @@ def delete_user(user_id):
     try:
         with with_users_db_cursor() as cursor:
             cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+            cursor.connection.commit()
         with with_conversations_db_cursor() as cursor:
             cursor.execute("DELETE FROM sessions WHERE user_id = %s", (user_id,))
+            cursor.connection.commit()
         return True
-    except Error as e:
+    except pymysql.Error as e:
         st.error(f"Database error while deleting account: {str(e)}", icon="❌")
         return False
 
