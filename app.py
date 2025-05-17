@@ -27,8 +27,7 @@ import streamlit as st
 from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-import mysql.connector
-from mysql.connector import Error
+import pymysql
 
 # Local application imports
 from Querymind.config import Config
@@ -107,32 +106,32 @@ def init_conversations_db():
     connection = None
     cursor = None
     try:
-        connection = mysql.connector.connect(
+        connection = pymysql.connect(
             host=Config.MYSQL_HOST,
-            port=Config.MYSQL_PORT,
+            port=int(Config.MYSQL_PORT),
             user=Config.MYSQL_USER,
-            password=Config.MYSQL_PASSWORD
+            password=Config.MYSQL_PASSWORD,
+            charset='utf8mb4'
         )
-        if connection.is_connected():
-            cursor = connection.cursor()
-            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {Config.MYSQL_CONVERSATIONS_DB}")
-            cursor.execute(f"USE {Config.MYSQL_CONVERSATIONS_DB}")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS sessions (
-                    session_id INTEGER PRIMARY KEY AUTO_INCREMENT,
-                    user_id VARCHAR(255),
-                    title VARCHAR(255) NOT NULL,
-                    created_at TIMESTAMP NOT NULL,
-                    conversation_json TEXT NOT NULL
-                )
-            """)
-            connection.commit()
-    except Error as e:
+        cursor = connection.cursor()
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {Config.MYSQL_CONVERSATIONS_DB}")
+        cursor.execute(f"USE {Config.MYSQL_CONVERSATIONS_DB}")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id INTEGER PRIMARY KEY AUTO_INCREMENT,
+                user_id VARCHAR(255),
+                title VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                conversation_json TEXT NOT NULL
+            )
+        """)
+        connection.commit()
+    except pymysql.Error as e:
         st.error(f"Error initializing conversations database: {e}", icon="❌")
     finally:
         if cursor is not None:
             cursor.close()
-        if connection is not None and connection.is_connected():
+        if connection is not None:
             connection.close()
 
 def save_session(session_id, title, messages):
@@ -159,14 +158,17 @@ def save_session(session_id, title, messages):
                     "INSERT INTO sessions (user_id, title, created_at, conversation_json) VALUES (%s, %s, %s, %s)",
                     (user_id, title, datetime.now(), json.dumps(serialized_messages))
                 )
-                return cursor.lastrowid
+                cursor.connection.commit()
+                cursor.execute("SELECT LAST_INSERT_ID()")
+                return cursor.fetchone()[0]
             else:
                 cursor.execute(
                     "UPDATE sessions SET title = %s, conversation_json = %s WHERE session_id = %s AND user_id = %s",
                     (title, json.dumps(serialized_messages), session_id, user_id)
                 )
+                cursor.connection.commit()
                 return session_id
-    except Error as e:
+    except pymysql.Error as e:
         st.error(f"Database error while saving session: {e}", icon="❌")
         return None
 
@@ -196,7 +198,7 @@ def load_session(session_id):
                         history.append(AIMessage(content=msg["content"]))
                 return history
             return create_history()
-    except Error as e:
+    except pymysql.Error as e:
         st.error(f"Database error while loading session: {e}", icon="❌")
         return create_history()
 
@@ -215,12 +217,13 @@ def delete_session(session_id):
                 "DELETE FROM sessions WHERE session_id = %s AND user_id = %s",
                 (session_id, user_id)
             )
+            cursor.connection.commit()
         if "current_session_id" in st.session_state and st.session_state.current_session_id == session_id:
             new_session_id = save_session(None, "", create_history())
             st.session_state.current_session_id = new_session_id
             st.session_state.session_title = f"Chat@{datetime.now().strftime('%d-%m-%y [%H:%M]')}"
             st.session_state.messages = create_history()
-    except Error as e:
+    except pymysql.Error as e:
         st.error(f"Database error while deleting session: {e}", icon="❌")
 
 def list_sessions():
@@ -239,11 +242,11 @@ def list_sessions():
                 (user_id,)
             )
             sessions = [
-                (session_id, title, datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S.%f").strftime("%d-%m-%y [%H:%M]"))
+                (session_id, title, datetime.strptime(str(created_at), "%Y-%m-%d %H:%M:%S.%f").strftime("%d-%m-%y [%H:%M]"))
                 for session_id, title, created_at in cursor.fetchall()
             ]
             return sessions
-    except Error as e:
+    except pymysql.Error as e:
         st.error(f"Database error while listing sessions: {e}", icon="❌")
         return []
 
