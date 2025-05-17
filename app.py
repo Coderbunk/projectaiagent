@@ -242,7 +242,7 @@ def list_sessions():
                 (user_id,)
             )
             sessions = [
-                (session_id, title, datetime.strptime(str(created_at), "%Y-%m-%d %H:%M:%S.%f").strftime("%d-%m-%y [%H:%M]"))
+                (session_id, title, datetime.strptime(str(created_at), "%Y-%m-%d %H:%M:%S").strftime("%d-%m-%y [%H:%M]"))
                 for session_id, title, created_at in cursor.fetchall()
             ]
             return sessions
