@@ -20,8 +20,8 @@ import os
 # Third-party imports
 import streamlit as st
 import bcrypt
-import mysql.connector
-from mysql.connector import Error
+import pymysql
+from pymysql.err import Error
 from contextlib import contextmanager
 
 # Local application imports
@@ -48,32 +48,33 @@ def init_users_db():
     connection = None
     cursor = None
     try:
-        connection = mysql.connector.connect(
+        connection = pymysql.connect(
             host=Config.MYSQL_HOST,
-            port=Config.MYSQL_PORT,
+            port=int(Config.MYSQL_PORT),
             user=Config.MYSQL_USER,
-            password=Config.MYSQL_PASSWORD
+            password=Config.MYSQL_PASSWORD,
+            charset='utf8mb4',
+            cursorclass=pymysql.cursors.DictCursor
         )
-        if connection.is_connected():
-            cursor = connection.cursor()
-            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {Config.MYSQL_USERS_DB}")
-            cursor.execute(f"USE {Config.MYSQL_USERS_DB}")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id VARCHAR(255) PRIMARY KEY,
-                    name VARCHAR(255) NOT NULL,
-                    username VARCHAR(255) NOT NULL UNIQUE,
-                    email VARCHAR(255) NOT NULL UNIQUE,
-                    password VARBINARY(255) NOT NULL
-                )
-            """)
-            connection.commit()
+        cursor = connection.cursor()
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {Config.MYSQL_USERS_DB}")
+        cursor.execute(f"USE {Config.MYSQL_USERS_DB}")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id VARCHAR(255) PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                username VARCHAR(255) NOT NULL UNIQUE,
+                email VARCHAR(255) NOT NULL UNIQUE,
+                password VARBINARY(255) NOT NULL
+            )
+        """)
+        connection.commit()
     except Error as e:
-        st.error(f"Error initializing users database: {e} (check MySQL host, port, user, and password)", icon="❌")
+        st.error(f"Error initializing users database: {e} (check MySQL host, port, user, password)", icon="❌")
     finally:
         if cursor is not None:
             cursor.close()
-        if connection is not None and connection.is_connected():
+        if connection is not None:
             connection.close()
 
 @contextmanager
@@ -84,12 +85,14 @@ def with_users_db_cursor():
     connection = None
     cursor = None
     try:
-        connection = mysql.connector.connect(
+        connection = pymysql.connect(
             host=Config.MYSQL_HOST,
-            port=Config.MYSQL_PORT,
+            port=int(Config.MYSQL_PORT),
             user=Config.MYSQL_USER,
             password=Config.MYSQL_PASSWORD,
-            database=Config.MYSQL_USERS_DB
+            database=Config.MYSQL_USERS_DB,
+            charset='utf8mb4',
+            cursorclass=pymysql.cursors.DictCursor
         )
         cursor = connection.cursor()
         yield cursor
@@ -102,7 +105,7 @@ def with_users_db_cursor():
     finally:
         if cursor:
             cursor.close()
-        if connection and connection.is_connected():
+        if connection:
             connection.close()
 
 @contextmanager
@@ -113,12 +116,14 @@ def with_conversations_db_cursor():
     connection = None
     cursor = None
     try:
-        connection = mysql.connector.connect(
+        connection = pymysql.connect(
             host=Config.MYSQL_HOST,
-            port=Config.MYSQL_PORT,
+            port=int(Config.MYSQL_PORT),
             user=Config.MYSQL_USER,
             password=Config.MYSQL_PASSWORD,
-            database=Config.MYSQL_CONVERSATIONS_DB
+            database=Config.MYSQL_CONVERSATIONS_DB,
+            charset='utf8mb4',
+            cursorclass=pymysql.cursors.DictCursor
         )
         cursor = connection.cursor()
         yield cursor
@@ -131,7 +136,7 @@ def with_conversations_db_cursor():
     finally:
         if cursor:
             cursor.close()
-        if connection and connection.is_connected():
+        if connection:
             connection.close()
 
 def get_next_user_id():
@@ -140,7 +145,7 @@ def get_next_user_id():
     """
     with with_users_db_cursor() as cursor:
         cursor.execute("SELECT user_id FROM users")
-        user_ids = [row[0] for row in cursor.fetchall()]
+        user_ids = [row['user_id'] for row in cursor.fetchall()]
         if not user_ids:
             return "QM1"
         numbers = [int(re.match(r"QM(\d+)", uid).group(1)) for uid in user_ids if re.match(r"QM(\d+)", uid)]
@@ -210,7 +215,7 @@ def register_user(name, username, email, password):
                 (user_id, name.strip(), username, email.lower(), hashed_password)
             )
             return True
-    except mysql.connector.IntegrityError as e:
+    except pymysql.err.IntegrityError as e:
         if "Duplicate entry" in str(e):
             if "username" in str(e):
                 st.error("Username already exists. Please choose a different username.", icon="❌")
@@ -237,11 +242,11 @@ def login_user(username, password):
             user = cursor.fetchone()
             if user:
                 # Ensure password hash is bytes
-                hashed = user[4]
+                hashed = user['password']
                 if isinstance(hashed, str):
                     hashed = hashed.encode('utf-8')
                 if verify_password(password, hashed):
-                    return {"user_id": user[0], "name": user[1], "username": user[2], "email": user[3]}
+                    return {"user_id": user['user_id'], "name": user['name'], "username": user['username'], "email": user['email']}
             return None
     except Error as e:
         st.error(f"Database error: {str(e)}", icon="❌")
