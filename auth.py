@@ -16,6 +16,7 @@ from pathlib import Path
 import base64
 import re
 import os
+from contextlib import contextmanager  # Added missing import
 
 # Third-party imports
 import streamlit as st
